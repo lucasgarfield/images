@@ -226,6 +226,35 @@ def boot_wsl(distro, arch, image_path, config):
             testlib.runcmd_nc(cmd)
 
 
+def boot_pxe(distro, arch, image_path, config):
+    """
+    Boot PXE image in all three network boot modes.
+    All modes must pass for overall success.
+    """
+    modes = ["pxe-bios", "pxe-uefi", "uefi-http"]
+
+    # Ensure dependencies are installed
+    deps = ["dnsmasq", "qemu-kvm", "syslinux-nonlinux", "edk2-ovmf"]
+    print(f"📦 Installing dependencies: {', '.join(deps)}")
+    testlib.runcmd_nc(["sudo", "dnf", "install", "-y"] + deps)
+
+    with ensure_uncompressed(image_path) as raw_image_path:
+        with create_ssh_key() as (privkey, pubkey):
+            for mode in modes:
+                print(f"🥾 Testing {mode} boot mode")
+                cmd = ["go", "run", "./cmd/boot-pxe", mode,
+                       "--image-path", raw_image_path,
+                       "--ssh-privkey", privkey,
+                       "--ssh-pubkey", pubkey,
+                       "--username", "osbuild",
+                       "--script", BASE_TEST_SCRIPT,
+                       "--config", config]
+                testlib.runcmd_nc(cmd)
+                print(f"✅ {mode} boot successful")
+
+    print("✅ All PXE boot modes successful")
+
+
 def main():
     desc = "Boot an image in the cloud environment it is built for and validate the configuration"
     parser = argparse.ArgumentParser(description=desc)
@@ -252,6 +281,8 @@ def main():
             boot_ami(distro, arch, image_type, image_path, build_config_path)
         case "vhd":
             boot_vhd(distro, arch, image_path, build_config_path)
+        case "pxe-tar-xz":
+            boot_pxe(distro, arch, image_path, build_config_path)
         case "iot-bootable-container":
             manifest_id = build_info["manifest-checksum"]
             boot_container(distro, arch, image_type, image_path, manifest_id)
