@@ -65,8 +65,10 @@ def generate_configs(build_requests, pipeline_file):
         image_path = f"./build/{build_name}"
 
         config_path = os.path.join(testlib.CONFIGS_PATH, config_name+".json")
+        runner = testlib.get_runner_for_image_type(image_type)
+        final_runner = testlib.format_runner_with_arch(runner, arch)
         pipeline_file.write(JOB_TEMPLATE.format(distro=distro, arch=arch, image_type=image_type,
-                                                runner=testlib.get_common_ci_runner(),
+                                                runner=final_runner,
                                                 config_name=config_name, config=config_path,
                                                 internal="true" if "rhel" in distro else "false",
                                                 image_path=image_path))

@@ -570,6 +570,33 @@ def get_common_ci_runner_distro():
     return get_common_ci_runner().split("/")[1]
 
 
+def get_runner_for_image_type(image_type):
+    """
+    Get the appropriate CI runner for a given image type.
+    Checks for overrides in Schutzfile, falls back to common runner.
+    """
+    with open(SCHUTZFILE, encoding="utf-8") as schutzfile:
+        data = json.load(schutzfile)
+
+    overrides = data.get("common", {}).get("gitlab-ci-runner-overrides", {})
+    if image_type in overrides:
+        return overrides[image_type]
+
+    return get_common_ci_runner()
+
+
+def format_runner_with_arch(runner, arch):
+    """
+    Format runner tag with architecture.
+    RHOS runners use '{runner}-{arch}-large' format.
+    AWS runners use '{runner}-{arch}' format.
+    """
+    if runner.startswith("rhos-"):
+        return f"{runner}-{arch}-large"
+    else:
+        return f"{runner}-{arch}"
+
+
 def find_image_file(build_path: str) -> str:
     """
     Find the path to the image by reading the manifest to get the name of the last pipeline and searching for the file
