@@ -29,6 +29,7 @@ CAN_BOOT_TEST = {
         "edge-ami",
         "iot-bootable-container",
         "vhd",
+        "pxe-tar-xz",
     ],
     "x86_64": [
         "wsl"
