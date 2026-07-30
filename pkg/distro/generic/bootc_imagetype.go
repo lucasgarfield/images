@@ -475,6 +475,14 @@ func (t *bootcImageType) manifestForGenericISO(options distro.ImageOptions, rng 
 		return nil, nil, fmt.Errorf("internal error: no base image defined")
 	}
 
+	// Registration is implemented as an Anaconda drop-in %post script, since
+	// this image type never generates a kickstart of its own: the container
+	// brings its own installer configuration. A container without Anaconda
+	// would produce an ISO that silently never registers, so refuse instead.
+	if options.Subscription != nil && !bd.sourceInfo.HasAnaconda {
+		return nil, nil, fmt.Errorf("cannot use subscriptions with %q: no Anaconda found in %q (looked for /usr/share/anaconda). Registration is installed by a drop-in %%post script in /usr/share/anaconda/post-scripts, so the container must ship Anaconda", t.Name(), bd.imgref)
+	}
+
 	local := t.useLocalStorage(options)
 	containerSource := container.SourceSpec{
 		Source: bd.imgref,
@@ -486,6 +494,7 @@ func (t *bootcImageType) manifestForGenericISO(options distro.ImageOptions, rng 
 	platformi.ImageFormat = platform.FORMAT_ISO
 
 	img := image.NewContainerBasedIso(platformi, t.Filename(), containerSource, nil)
+	img.Subscription = options.Subscription
 	if options.Bootc != nil && options.Bootc.InstallerPayloadRef != "" {
 		img.PayloadContainer = &container.SourceSpec{
 			Source: options.Bootc.InstallerPayloadRef,

@@ -121,6 +121,17 @@ sudo image-builder build --bootc-ref localhost/iso --bootc-default-fs ext4 bootc
 
 For more examples, including for other operating systems, you can take a look at [this demonstration repository](https://github.com/ondrejbudai/bootc-isos).
 
+### Subscriptions
+
+Passing `--registrations` when building a `bootc-generic-iso` places the subscription credentials and a first-boot registration service on the ISO, so that the *installed* system registers the first time it boots.
+
+Because this image type never generates a kickstart — your container brings its own installer configuration — the credentials are installed by a drop-in `%post` script written to `/usr/share/anaconda/post-scripts/50-osbuild-subscription.ks`. Anaconda runs every `%post` it finds in that directory, including when no kickstart is supplied at all, so this works for interactive installs too. If you pass your own `inst.ks=`, the drop-in runs after your own `%post` sections.
+
+This requires your container to ship Anaconda. `image-builder` checks for `/usr/share/anaconda` and refuses to build if `--registrations` is passed to a container without it, rather than producing an ISO that silently never registers.
+
+> [!NOTE]
+> *`image-builder` cannot verify that the system being installed can actually register. Unlike a disk image build, the container introspected here is the **installer**, not the payload — and your installer's kickstart decides what it installs, which need not be the `--bootc-installer-payload-ref` that was embedded. If the installed system lacks `subscription-manager`, the registration service will fail on first boot.*
+
 ## Historical
 
 ### `bootc-installer`

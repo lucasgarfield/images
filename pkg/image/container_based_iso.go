@@ -6,6 +6,7 @@ import (
 
 	"github.com/osbuild/image-builder/pkg/artifact"
 	"github.com/osbuild/image-builder/pkg/container"
+	"github.com/osbuild/image-builder/pkg/customizations/subscription"
 	"github.com/osbuild/image-builder/pkg/disk"
 	"github.com/osbuild/image-builder/pkg/manifest"
 	"github.com/osbuild/image-builder/pkg/platform"
@@ -22,6 +23,11 @@ type ContainerBasedIso struct {
 	// container storage (for bootc installer scenarios where the payload
 	// container needs to be available at install time).
 	PayloadContainer *container.SourceSpec
+
+	// Subscription options to include. Requires the source container to
+	// carry Anaconda: the credentials are installed onto the target system
+	// by an Anaconda drop-in %post script.
+	Subscription *subscription.ImageOptions
 
 	Product string
 	Version string
@@ -80,6 +86,7 @@ func (img *ContainerBasedIso) InstantiateManifestFromContainer(m *manifest.Manif
 	buildPipeline := manifest.NewBuildFromContainer(m, runner, cnts, buildOptions)
 	osTreePipeline := manifest.NewOSFromContainer("os-tree", buildPipeline, &img.ContainerSource)
 	osTreePipeline.PayloadContainer = img.PayloadContainer
+	osTreePipeline.Subscription = img.Subscription
 
 	product := img.Product
 	if product == "" {

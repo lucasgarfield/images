@@ -66,6 +66,12 @@ type Info struct {
 	InitrdModules      []string    `yaml:"initrd_modules"`
 	ISOInfo            ISOInfo     `yaml:"iso_info"`
 
+	// HasAnaconda reports whether the container carries an Anaconda
+	// installation. Image types that hook into Anaconda (e.g. via its
+	// drop-in %post scripts) use this to tell the user up front that the
+	// container they passed cannot support the requested feature.
+	HasAnaconda bool `yaml:"has_anaconda"`
+
 	MountConfiguration *osbuild.MountConfiguration
 	PartitionTable     *disk.PartitionTable
 }
@@ -296,6 +302,17 @@ func readKernelInfo(root string) (*KernelInfo, error) {
 	return nil, fmt.Errorf("no valid kernel modules directory")
 }
 
+// readHasAnaconda reports whether Anaconda is installed in the container.
+//
+// It probes for /usr/share/anaconda, which the anaconda package owns and
+// which is also the parent of the post-scripts drop-in directory. The
+// initrd module list is not used for this: the anaconda dracut module can
+// be present without Anaconda being the configured installer.
+func readHasAnaconda(root string) bool {
+	fi, err := os.Stat(path.Join(root, "usr/share/anaconda"))
+	return err == nil && fi.IsDir()
+}
+
 func Load(root string) (*Info, error) {
 	osrelease, err := distro.ReadOSReleaseFromTree(root)
 	if err != nil {
@@ -380,5 +397,6 @@ func Load(root string) (*Info, error) {
 		MountConfiguration: mc,
 		PartitionTable:     pt,
 		ISOInfo:            isoInfo,
+		HasAnaconda:        readHasAnaconda(root),
 	}, nil
 }

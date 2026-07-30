@@ -361,6 +361,36 @@ func TestLoadInfoUEFIVendorSearchPath(t *testing.T) {
 	assert.Equal(t, "fedora", info.UEFIVendor)
 }
 
+func TestLoadInfoHasAnaconda(t *testing.T) {
+	type testCase struct {
+		desc     string
+		create   string
+		expected bool
+	}
+
+	cases := []testCase{
+		{"no anaconda", "", false},
+		{"anaconda installed", "usr/share/anaconda", true},
+		{"post-scripts dir present", "usr/share/anaconda/post-scripts", true},
+		// only a directory counts; a stray file of the same name does not
+		{"unrelated path", "usr/share/anaconda-something", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			root := t.TempDir()
+			writeOSRelease(t, root, "fedora", "40", "Fedora Linux", "fedora", "platform:f40", "coreos")
+			if c.create != "" {
+				require.NoError(t, os.MkdirAll(path.Join(root, c.create), 0755))
+			}
+
+			info, err := Load(root)
+			require.NoError(t, err)
+			assert.Equal(t, c.expected, info.HasAnaconda)
+		})
+	}
+}
+
 func TestHasModules(t *testing.T) {
 	type testCase struct {
 		desc    string

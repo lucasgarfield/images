@@ -1,10 +1,12 @@
 package generic
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/osbuild/blueprint/pkg/blueprint"
@@ -14,6 +16,7 @@ import (
 	"github.com/osbuild/image-builder/pkg/bib/osinfo"
 	"github.com/osbuild/image-builder/pkg/bootc"
 	"github.com/osbuild/image-builder/pkg/container"
+	"github.com/osbuild/image-builder/pkg/customizations/subscription"
 	"github.com/osbuild/image-builder/pkg/datasizes"
 	"github.com/osbuild/image-builder/pkg/depsolvednf"
 	"github.com/osbuild/image-builder/pkg/disk"
@@ -651,6 +654,16 @@ func NewTestBootcDistro(t *testing.T) *BootcDistro {
 	return distro
 }
 
+// NewTestBootcDistroWithAnaconda returns a test distro whose container carries
+// an Anaconda installation, which the generic ISO requires before it will
+// accept subscription options.
+func NewTestBootcDistroWithAnaconda(t *testing.T) *BootcDistro {
+	t.Helper()
+	distro := NewTestBootcDistro(t)
+	distro.sourceInfo.HasAnaconda = true
+	return distro
+}
+
 func NewTestBootcImageType(t *testing.T, imgTypeName string) *bootcImageType {
 	t.Helper()
 	distro := NewTestBootcDistro(t)
@@ -1048,6 +1061,97 @@ func TestBootcIsoManifestSerialization(t *testing.T) {
 		"bootiso": {"org.osbuild.xorrisofs"},
 	}
 	assert.NoError(t, checkStages(manifestJson, expStages, nil))
+}
+
+// inlineSources returns the decoded contents of every org.osbuild.inline
+// source in the serialized manifest, concatenated.
+func inlineSources(t *testing.T, serialized manifest.OSBuildManifest) string {
+	t.Helper()
+
+	var parsed struct {
+		Sources map[string]struct {
+			Items map[string]struct {
+				Data string `json:"data"`
+			} `json:"items"`
+		} `json:"sources"`
+	}
+	require.NoError(t, json.Unmarshal(serialized, &parsed))
+
+	var sb strings.Builder
+	for _, item := range parsed.Sources["org.osbuild.inline"].Items {
+		decoded, err := base64.StdEncoding.DecodeString(item.Data)
+		require.NoError(t, err)
+		sb.Write(decoded)
+	}
+	return sb.String()
+}
+
+func TestBootcGenericIsoSubscription(t *testing.T) {
+	subOptions := &subscription.ImageOptions{
+		Organization:  "theorg",
+		ActivationKey: "thekey",
+		BaseUrl:       "https://example.com/baseurl",
+	}
+
+	t.Run("with-anaconda", func(t *testing.T) {
+		bd := NewTestBootcDistroWithAnaconda(t)
+		imgType, err := bd.arches["x86_64"].GetImageType("bootc-generic-iso")
+		require.NoError(t, err)
+
+		mf, _, err := imgType.Manifest(&blueprint.Blueprint{}, distro.ImageOptions{
+			Subscription: subOptions,
+		}, nil, common.ToPtr(int64(0)))
+		require.NoError(t, err)
+
+		manifestJson, err := mf.Serialize(nil, isoContainers, nil, nil, nil)
+		require.NoError(t, err)
+
+		expStages := map[string][]string{
+			"os-tree": {
+				"org.osbuild.container-deploy",
+				// the registration unit, the credentials and the Anaconda
+				// drop-in that ferries them onto the installed system
+				"org.osbuild.systemd.unit.create",
+				"org.osbuild.mkdir",
+				"org.osbuild.copy",
+			},
+		}
+		missingStages := map[string][]string{
+			// the installer environment must not enable the service for
+			// itself; only the installed system registers
+			"os-tree": {"org.osbuild.systemd"},
+		}
+		assert.NoError(t, checkStages(manifestJson, expStages, missingStages))
+
+		// The stages above reference inline sources; without those the
+		// manifest would point at content that isn't in it. Check the
+		// drop-in itself made it through.
+		inline := inlineSources(t, manifestJson)
+		assert.Contains(t, inline, "%post --nochroot --erroronfail")
+		assert.Contains(t, inline, "systemctl enable 'osbuild-subscription-register.service'")
+	})
+
+	t.Run("without-anaconda", func(t *testing.T) {
+		bd := NewTestBootcDistro(t)
+		imgType, err := bd.arches["x86_64"].GetImageType("bootc-generic-iso")
+		require.NoError(t, err)
+
+		_, _, err = imgType.Manifest(&blueprint.Blueprint{}, distro.ImageOptions{
+			Subscription: subOptions,
+		}, nil, common.ToPtr(int64(0)))
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "no Anaconda found")
+		assert.ErrorContains(t, err, "/usr/share/anaconda/post-scripts")
+	})
+
+	t.Run("no-subscription-needs-no-anaconda", func(t *testing.T) {
+		bd := NewTestBootcDistro(t)
+		imgType, err := bd.arches["x86_64"].GetImageType("bootc-generic-iso")
+		require.NoError(t, err)
+
+		_, _, err = imgType.Manifest(&blueprint.Blueprint{}, distro.ImageOptions{}, nil, common.ToPtr(int64(0)))
+		require.NoError(t, err)
+	})
 }
 
 func TestContainerSourceLocality(t *testing.T) {

@@ -12,6 +12,17 @@ import (
 	"github.com/osbuild/image-builder/pkg/shutil"
 )
 
+const (
+	// subscriptionKeyFilepath holds the org ID and activation key that the
+	// registration service sources. It also acts as the service's
+	// ConditionPathExists file and is removed once registration succeeds.
+	subscriptionKeyFilepath = "/etc/osbuild-subscription-register.env"
+
+	// subscriptionServiceFilename is the unit that registers the system on
+	// first boot.
+	subscriptionServiceFilename = "osbuild-subscription-register.service"
+)
+
 type Subscription struct {
 	Base
 
@@ -115,7 +126,7 @@ func subscriptionService(
 
 	// Write a key file that will contain the org ID and activation key to be sourced in the systemd service.
 	// The file will also act as the ConditionFirstBoot file.
-	subkeyFilepath := "/etc/osbuild-subscription-register.env"
+	subkeyFilepath := subscriptionKeyFilepath
 	subkeyContent := fmt.Sprintf("ORG_ID=%s\nACTIVATION_KEY=%s", subscriptionOptions.Organization, subscriptionOptions.ActivationKey)
 
 	// NOTE: Ownership is left as nil:nil, which implicitly creates files as
@@ -204,7 +215,7 @@ func subscriptionService(
 
 	commands = append(commands, fmt.Sprintf("/usr/bin/rm %s", shutil.Quote(subkeyFilepath)))
 
-	subscribeServiceFile := "osbuild-subscription-register.service"
+	subscribeServiceFile := subscriptionServiceFilename
 	regServiceStageOptions := &osbuild.SystemdUnitCreateStageOptions{
 		Filename: subscribeServiceFile,
 		UnitType: "system",
