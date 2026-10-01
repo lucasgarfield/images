@@ -1,8 +1,30 @@
+> [!IMPORTANT]
+> Remove this line to confirm you've reviewed this PR before submitting.
+
 # image-builder CLI
 
-Build images from the command line in a convenient way.
+Build images from the command line in a convenient way, using either RPM packages
+or [bootc](https://github.com/containers/bootc) bootable containers as inputs.
+
+The `bootc-image-builder` implementation is now part of `image-builder`. A single
+multicall binary provides the `image-builder` CLI and the `bootc-image-builder`
+compatibility CLI, selected by the name used to invoke it.
+
+See the [documentation](./doc/index.md) for general usage and the
+[bootc migration guide](./doc/20-advanced/20-bootc/50-migration.md) for moving
+existing `bootc-image-builder` workflows to `image-builder`.
 
 ## Run via container
+
+The `ghcr.io/osbuild/image-builder-cli` image contains both CLI implementations
+in the same multicall binary. Its default entrypoint is `/usr/bin/image-builder`.
+Use `build --distro ... <image-type>` for package-based builds, as below, or
+`build --bootc-ref ... <image-type>` for bootable container builds.
+
+For bootc examples, including the required container storage mount, see the
+[migration guide](./doc/20-advanced/20-bootc/50-migration.md). For the container
+that invokes the binary as `bootc-image-builder` by default, see the
+[compatibility README](./bootc-image-builder/README.md).
 
 ```console
 $ sudo podman run --privileged \
@@ -362,10 +384,17 @@ files directly in that directory. For example, with
 
 ### What is the relation to bootc-image-builder?
 
-Both projects are very close. [`bootc-image-builder`](https://github.com/osbuild/bootc-image-builder)
-focuses on providing image-based artifacts while `image-builder` works with
-traditional package based inputs. We expect the two projects to merge
-eventually and they already share a lot of code.
+The `bootc-image-builder` implementation has merged into `image-builder`.
+`image-builder` supports both package-based and bootable container inputs.
+Running the same multicall binary under the name `bootc-image-builder`
+selects a compatibility CLI with the legacy positional container reference and
+`--type` flag.
+
+Compatibility is not exact. New and migrated workflows should use
+`image-builder build --bootc-ref ... <image-type>` directly. See the
+[compatibility README](./bootc-image-builder/README.md) for the current limitations
+and the [migration guide](./doc/20-advanced/20-bootc/50-migration.md) for examples,
+flag mappings, configuration, and image type changes.
 
 ### I get "Warnings during manifest creation" and the build stops, what can I do?
 
