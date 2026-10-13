@@ -1793,3 +1793,59 @@ func TestCacheDirForUidNonRootFallback(t *testing.T) {
 	expected := filepath.Join(home, ".cache", "image-builder", "store")
 	assert.Equal(t, expected, main.CacheDirForUid(1000))
 }
+
+func TestManifestIntegrationSBOMLayout(t *testing.T) {
+	restore := main.MockManifestgenDepsolver(fakeDepsolve)
+	defer restore()
+	restore = main.MockManifestgenContainerResolver(fakeContainerResolver)
+	defer restore()
+	restore = main.MockNewRepoRegistry(testrepos.New)
+	defer restore()
+
+	outputDir := t.TempDir()
+	restore = main.MockOsArgs([]string{
+		"manifest", "qcow2", "--arch=x86_64", "--distro=centos-9", "--output-dir", outputDir,
+		"--with-sbom", "--sbom-os-root", "--sbom-link-buildroot",
+		"--sbom-creator", "Organization: Red Hat",
+	})
+	defer restore()
+	restore = main.MockOsStdout(io.Discard)
+	defer restore()
+	require.NoError(t, main.Run())
+
+	read := func(name string) map[string]interface{} {
+		data, err := os.ReadFile(filepath.Join(outputDir, "centos-9-qcow2-x86_64."+name))
+		require.NoError(t, err)
+		var d map[string]interface{}
+		require.NoError(t, json.Unmarshal(data, &d))
+		return d
+	}
+	img, br := read("image-os.spdx.json"), read("buildroot-build.spdx.json")
+	for _, d := range []map[string]interface{}{img, br} {
+		ci := d["creationInfo"].(map[string]interface{})
+		assert.Contains(t, ci["creators"], "Organization: Red Hat")
+		assert.Contains(t, ci["comment"], "SBOM generation context: build.")
+	}
+	for _, d := range []map[string]interface{}{img, br} {
+		var describes []interface{}
+		for _, r := range d["relationships"].([]interface{}) {
+			if r.(map[string]interface{})["relationshipType"] == "DESCRIBES" {
+				describes = append(describes, r.(map[string]interface{})["relatedSpdxElement"])
+			}
+		}
+		assert.Equal(t, []interface{}{"SPDXRef-image-root"}, describes)
+	}
+	assert.Equal(t, "centos-9-qcow2-x86_64-build", br["name"])
+	ref := img["externalDocumentRefs"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, "DocumentRef-buildroot-build", ref["externalDocumentId"])
+	assert.Equal(t, br["documentNamespace"], ref["spdxDocument"])
+	// manifest-only: the image artifact does not exist yet, so the root has no checksum
+	for _, p := range img["packages"].([]interface{}) {
+		pm := p.(map[string]interface{})
+		if pm["SPDXID"] == "SPDXRef-image-root" {
+			assert.Equal(t, "OPERATING_SYSTEM", pm["primaryPackagePurpose"])
+			assert.NotContains(t, pm, "checksums")
+			assert.NotContains(t, pm, "packageFileName")
+		}
+	}
+}
