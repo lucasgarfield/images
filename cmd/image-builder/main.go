@@ -683,6 +683,9 @@ func generateManifest(pbar progress.ProgressBar, cmd *cobra.Command, args []stri
 		if mgOptions.SBOMCreators, err = cmd.Flags().GetStringArray("sbom-creator"); err != nil {
 			return nil, err
 		}
+		if mgOptions.SBOMNamespace, err = cmd.Flags().GetString("sbom-namespace"); err != nil {
+			return nil, err
+		}
 		sbomDir, err := resolveOutputDir(outputDir, img)
 		if err != nil {
 			return nil, err

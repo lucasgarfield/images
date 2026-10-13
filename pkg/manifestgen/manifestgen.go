@@ -69,6 +69,12 @@ type Options struct {
 	// the SBOM author) added to every written SBOM.
 	SBOMCreators []string
 
+	// SBOMNamespace, if set, is the base URI of the documentNamespace of
+	// every written SBOM: "<SBOMNamespace>/<DocumentID>.spdx.json", e.g.
+	// https://www.redhat.com (Red Hat SBOM guide). Default: osbuild's
+	// https://osbuild.org/spdxdocs/<DocumentID>.
+	SBOMNamespace string
+
 	// WarningsOutput will receive any warnings that are part of
 	// the manifest generation. If it is unset any warnings will
 	// generate an error.
@@ -114,6 +120,7 @@ type Generator struct {
 	sbomOSRoot             bool
 	sbomLinkBuildroot      bool
 	sbomCreators           []string
+	sbomNamespace          string
 	warningsOutput         io.Writer
 	depsolveWarningsOutput io.Writer
 
@@ -145,6 +152,7 @@ func New(reporegistry *reporegistry.RepoRegistry, opts *Options) (*Generator, er
 		sbomOSRoot:             opts.SBOMOSRoot,
 		sbomLinkBuildroot:      opts.SBOMLinkBuildroot,
 		sbomCreators:           opts.SBOMCreators,
+		sbomNamespace:          opts.SBOMNamespace,
 		warningsOutput:         opts.WarningsOutput,
 		depsolveWarningsOutput: opts.DepsolveWarningsOutput,
 		customSeed:             opts.CustomSeed,
@@ -344,6 +352,9 @@ func (mg *Generator) Generate(bp *blueprint.Blueprint, imgType distro.ImageType,
 					if err != nil {
 						return nil, err
 					}
+				}
+				if doc, err = sbom.SetSPDXNamespace(doc, mg.sbomNamespace); err != nil {
+					return nil, err
 				}
 				if mg.sbomLinkBuildroot && pipelinePurpose == "image" {
 					for _, brName := range plNames {

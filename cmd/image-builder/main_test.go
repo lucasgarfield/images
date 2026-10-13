@@ -1806,7 +1806,7 @@ func TestManifestIntegrationSBOMLayout(t *testing.T) {
 	restore = main.MockOsArgs([]string{
 		"manifest", "qcow2", "--arch=x86_64", "--distro=centos-9", "--output-dir", outputDir,
 		"--with-sbom", "--sbom-os-root", "--sbom-link-buildroot",
-		"--sbom-creator", "Organization: Red Hat",
+		"--sbom-creator", "Organization: Red Hat", "--sbom-namespace", "https://www.redhat.com",
 	})
 	defer restore()
 	restore = main.MockOsStdout(io.Discard)
@@ -1825,6 +1825,7 @@ func TestManifestIntegrationSBOMLayout(t *testing.T) {
 		ci := d["creationInfo"].(map[string]interface{})
 		assert.Contains(t, ci["creators"], "Organization: Red Hat")
 		assert.Contains(t, ci["comment"], "SBOM generation context: build.")
+		assert.Regexp(t, `^https://www\.redhat\.com/[^/]+\.spdx\.json$`, d["documentNamespace"])
 	}
 	for _, d := range []map[string]interface{}{img, br} {
 		var describes []interface{}

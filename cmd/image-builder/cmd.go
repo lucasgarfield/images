@@ -239,6 +239,7 @@ func setupManifestCmd() (*cobra.Command, error) {
 	manifestCmd.Flags().Bool("with-sbom", false, `export SPDX SBOM document`)
 	manifestCmd.Flags().Bool("sbom-os-root", false, `add an OPERATING_SYSTEM root package to the image SBOM (Konflux/mobster friendly)`)
 	manifestCmd.Flags().Bool("sbom-link-buildroot", false, `reference the build-root SBOM from the image SBOM (externalDocumentRefs + BUILD_TOOL_OF)`)
+	manifestCmd.Flags().String("sbom-namespace", "", `base URI for the SBOM documentNamespace, e.g. "https://www.redhat.com" (default: https://osbuild.org/spdxdocs)`)
 	manifestCmd.Flags().StringArray("sbom-creator", nil, `extra SPDX creator for the SBOMs, e.g. "Organization: Red Hat" (SBOM author)`)
 	manifestCmd.Flags().Bool("with-rpmlist", false, `export RPM list as JSON`)
 	if err := manifestCmd.Flags().MarkHidden("with-rpmlist"); err != nil {
