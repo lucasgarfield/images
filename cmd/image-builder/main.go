@@ -890,9 +890,28 @@ func cmdBuild(cmd *cobra.Command, args []string) error {
 
 	// We discard any warnings from the depsolver until we figure out a better
 	// idea (likely in manifestgen)
-	mf, err := generateManifest(pbar, cmd, args, img, io.Discard, opts)
+	manifestPath, err := cmd.Flags().GetString("manifest")
 	if err != nil {
 		return err
+	}
+	var mf []byte
+	if manifestPath != "" {
+		// Split flow: build a manifest made earlier by "image-builder
+		// manifest" (hermetic: no depsolve, sources come from the store).
+		mf, err = os.ReadFile(manifestPath)
+		if err != nil {
+			return fmt.Errorf("cannot read manifest: %w", err)
+		}
+		if withSBOM, _ := cmd.Flags().GetBool("with-sbom"); withSBOM {
+			if err := importManifestSBOMs(manifestPath, mf, outputDir, basename); err != nil {
+				return err
+			}
+		}
+	} else {
+		mf, err = generateManifest(pbar, cmd, args, img, io.Discard, opts)
+		if err != nil {
+			return err
+		}
 	}
 
 	bootMode := img.ImgType.BootMode()
@@ -1060,6 +1079,48 @@ func recordArtifactInSBOMs(outputDir, basename, imagePath string) error {
 			return fmt.Errorf("cannot record artifact in SBOM %q: %w", m, err)
 		}
 		fmt.Fprintf(osStdout, "SBOM %s: recorded %s sha256:%s\n", m, filepath.Base(imagePath), sum)
+	}
+	return nil
+}
+
+// importManifestSBOMs brings the SBOMs that "image-builder manifest
+// --with-sbom" wrote next to manifestPath into outputDir for "build
+// --manifest --with-sbom". The manifest carries only RPM checksums and
+// URLs, not the depsolve metadata (license, summary, supplier, source RPM,
+// repo id) the SBOM is made of, so the SBOMs cannot be regenerated from it
+// in the hermetic build step. Instead every RPM checksum in the SBOMs must
+// be an RPM source of the manifest, and the image SBOMs must reference the
+// RPMs the manifest installs, so a stale or foreign SBOM is rejected.
+func importManifestSBOMs(manifestPath string, mf []byte, outputDir, basename string) error {
+	srcDir := filepath.Dir(manifestPath)
+	prefix := strings.TrimSuffix(filepath.Base(manifestPath), ".osbuild-manifest.json")
+	matches, err := filepath.Glob(filepath.Join(srcDir, prefix+".*.spdx.json"))
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		return fmt.Errorf("--with-sbom: no %s.*.spdx.json next to %s (run \"image-builder manifest --with-sbom\" first)", prefix, manifestPath)
+	}
+	sums, err := sbom.ManifestRPMChecksums(mf)
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		data, err := os.ReadFile(m)
+		if err != nil {
+			return err
+		}
+		if err := sbom.CheckSPDXAgainstManifest(data, sums); err != nil {
+			return fmt.Errorf("SBOM %s does not match manifest %s: %w", m, manifestPath, err)
+		}
+		dst := filepath.Join(outputDir, basename+strings.TrimPrefix(filepath.Base(m), prefix))
+		if dst == m {
+			continue
+		}
+		// #nosec: G306
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return err
+		}
 	}
 	return nil
 }

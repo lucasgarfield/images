@@ -313,6 +313,7 @@ func setupBuildCmd() (*cobra.Command, error) {
 	buildCmd.Flags().StringArray("with-extra", nil, `include an extra by type:name in the build, globs supported (e.g. --with-extra "sysext:*")`)
 	buildCmd.Flags().Bool("with-manifest", false, `export osbuild manifest`)
 	buildCmd.Flags().Bool("with-buildlog", false, `export osbuild buildlog`)
+	buildCmd.Flags().String("manifest", "", `build this osbuild manifest (from "image-builder manifest") instead of generating one; no depsolving or network access. With --with-sbom, the SBOMs written by "manifest --with-sbom" next to it are checked against the manifest and get the artifact SHA256`)
 	buildCmd.Flags().String("cache", defaultCacheDir(), `osbuild directory to cache intermediate build artifacts"`)
 	// XXX: add "--verbose" here, similar to how bib is doing this
 	// (see https://github.com/osbuild/bootc-image-builder/pull/790/commits/5cec7ffd8a526e2ca1e8ada0ea18f927695dfe43)
