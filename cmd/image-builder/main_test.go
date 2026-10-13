@@ -2,6 +2,9 @@ package main_test
 
 import (
 	"bytes"
+	"crypto/sha1" // #nosec G505
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1792,6 +1795,53 @@ func TestCacheDirForUidNonRootFallback(t *testing.T) {
 	require.NoError(t, err)
 	expected := filepath.Join(home, ".cache", "image-builder", "store")
 	assert.Equal(t, expected, main.CacheDirForUid(1000))
+}
+
+func TestBuildIntegrationSBOMRecordsArtifactSHA256(t *testing.T) {
+	restore := main.MockManifestgenDepsolver(fakeDepsolve)
+	defer restore()
+	restore = main.MockManifestgenContainerResolver(fakeContainerResolver)
+	defer restore()
+	restore = main.MockNewRepoRegistry(testrepos.New)
+	defer restore()
+
+	outputDir := filepath.Join(t.TempDir(), "output")
+	prefix := fmt.Sprintf("centos-9-qcow2-%s", arch.Current().String())
+	restore = main.MockOsArgs([]string{
+		"build", "qcow2", "--distro", "centos-9", "--cache", t.TempDir(), "--output-dir", outputDir,
+		"--with-sbom", "--sbom-os-root", "--sbom-link-buildroot", "--sbom-namespace", "https://www.redhat.com",
+	})
+	defer restore()
+	testutil.MockCommand(t, "osbuild", makeFakeOsbuildScript())
+
+	require.NoError(t, main.Run())
+
+	img := filepath.Join(outputDir, prefix+".qcow2")
+	// sha256sum of "fake-img-qcow2\n" as written by the fake osbuild
+	h := sha256.Sum256([]byte("fake-img-qcow2\n"))
+	want := hex.EncodeToString(h[:])
+
+	var doc map[string]interface{}
+	data, err := os.ReadFile(filepath.Join(outputDir, prefix+".image-os.spdx.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &doc))
+	assert.True(t, strings.HasPrefix(doc["documentNamespace"].(string), "https://www.redhat.com/"))
+	var root map[string]interface{}
+	for _, p := range doc["packages"].([]interface{}) {
+		if p.(map[string]interface{})["SPDXID"] == "SPDXRef-image-root" {
+			root = p.(map[string]interface{})
+		}
+	}
+	require.NotNil(t, root)
+	assert.Equal(t, filepath.Base(img), root["packageFileName"])
+	assert.Equal(t, []interface{}{map[string]interface{}{"algorithm": "SHA256", "checksumValue": want}}, root["checksums"])
+
+	// the build-root SBOM is not modified, so the SHA1 referenced from the image SBOM still matches
+	br, err := os.ReadFile(filepath.Join(outputDir, prefix+".buildroot-build.spdx.json"))
+	require.NoError(t, err)
+	sum := sha1.Sum(br) // #nosec G401
+	ref := doc["externalDocumentRefs"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, hex.EncodeToString(sum[:]), ref["checksum"].(map[string]interface{})["checksumValue"])
 }
 
 func TestManifestIntegrationSBOMLayout(t *testing.T) {

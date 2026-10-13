@@ -935,6 +935,11 @@ func cmdBuild(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(osStdout, "Image build successful: %s\n", p)
 	}
 	imagePath := outputPaths[0]
+	if withSBOM, _ := cmd.Flags().GetBool("with-sbom"); withSBOM {
+		if err := recordArtifactInSBOMs(outputDir, basename, imagePath); err != nil {
+			return err
+		}
+	}
 
 	pbar, err = progressFromCmd(cmd, progress.ProgressConfig{
 		FilePath: filepath.Join(outputDir, fmt.Sprintf("%s.progress", basename)),
@@ -1039,4 +1044,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("error: %s\n", err)
 	}
+}
+
+// recordArtifactInSBOMs writes the SHA256 and file name of the built image
+// into the image (payload) SBOMs written next to it; build-root SBOMs are
+// left untouched (their SHA1 is referenced from the image SBOM).
+func recordArtifactInSBOMs(outputDir, basename, imagePath string) error {
+	matches, err := filepath.Glob(filepath.Join(outputDir, basename+".image-*.spdx.json"))
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		sum, err := sbom.RecordSPDXArtifactFile(m, imagePath)
+		if err != nil {
+			return fmt.Errorf("cannot record artifact in SBOM %q: %w", m, err)
+		}
+		fmt.Fprintf(osStdout, "SBOM %s: recorded %s sha256:%s\n", m, filepath.Base(imagePath), sum)
+	}
+	return nil
 }
