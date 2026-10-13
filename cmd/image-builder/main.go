@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -694,6 +695,14 @@ func generateManifest(pbar progress.ProgressBar, cmd *cobra.Command, args []stri
 		if err != nil {
 			return nil, err
 		}
+		if refSBOM, _ := cmd.Flags().GetString("bootc-ref-sbom"); refSBOM != "" {
+			if bootcRef == "" {
+				return nil, fmt.Errorf("--bootc-ref-sbom needs --bootc-ref")
+			}
+			if err := writeBootcDiskSBOM(cmd, img, sbomDir, sbomBasename, bootcRef, refSBOM); err != nil {
+				return nil, err
+			}
+		}
 		mgOptions.SBOMWriter = func(filename string, content io.Reader, docType sbom.StandardType) error {
 			filename = fmt.Sprintf("%s.%s", sbomBasename, strings.SplitN(filename, ".", 2)[1])
 			return fileWriter(sbomDir, filename, content)
@@ -1123,4 +1132,37 @@ func importManifestSBOMs(manifestPath string, mf []byte, outputDir, basename str
 		}
 	}
 	return nil
+}
+
+// writeBootcDiskSBOM writes <basename>.image-disk.spdx.json for a bootc
+// disk: the container SBOM given with --bootc-ref-sbom is checked against
+// the digests of the resolved --bootc-ref, and its installed packages are
+// merged inline under the disk root (see sbom.BootcDiskSBOM). "build"
+// later records the disk SHA256 in it (recordArtifactInSBOMs).
+func writeBootcDiskSBOM(cmd *cobra.Command, img *imagefilter.Result, sbomDir, basename, ref, sbomPath string) error {
+	container, err := os.ReadFile(sbomPath)
+	if err != nil {
+		return fmt.Errorf("cannot read --bootc-ref-sbom: %w", err)
+	}
+	out, err := exec.Command("podman", "image", "inspect", "--format", "{{.Digest}}{{range .RepoDigests}} {{.}}{{end}}", ref).Output()
+	if err != nil {
+		return fmt.Errorf("cannot resolve digest of bootc container %q: %w", ref, err)
+	}
+	var digests []string
+	for _, f := range strings.Fields(string(out)) {
+		if i := strings.LastIndex(f, "@"); i >= 0 {
+			f = f[i+1:]
+		}
+		digests = append(digests, f)
+	}
+	creators, _ := cmd.Flags().GetStringArray("sbom-creator")
+	ns, _ := cmd.Flags().GetString("sbom-namespace")
+	doc, err := sbom.BootcDiskSBOM(container, sbom.BootcDisk{
+		Name: basename, ImageType: img.ImgType.Name(), Arch: img.ImgType.Arch().Name(),
+		Creators: creators, Namespace: ns, Tool: "Tool: image-builder", Digests: digests, ContainerRef: ref,
+	})
+	if err != nil {
+		return fmt.Errorf("--bootc-ref-sbom: %w", err)
+	}
+	return fileWriter(sbomDir, basename+".image-disk.spdx.json", bytes.NewReader(doc))
 }

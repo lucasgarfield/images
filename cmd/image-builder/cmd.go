@@ -237,6 +237,7 @@ func setupManifestCmd() (*cobra.Command, error) {
 		return nil, err
 	}
 	manifestCmd.Flags().Bool("with-sbom", false, `export SPDX SBOM document`)
+	manifestCmd.Flags().String("bootc-ref-sbom", "", `with --bootc-ref and --with-sbom: SPDX 2.3 SBOM of the bootc container; its packages are merged inline under the disk root, linked with GENERATED_FROM, and it must describe the resolved container digest`)
 	manifestCmd.Flags().Bool("sbom-os-root", false, `add an OPERATING_SYSTEM root package to the image SBOM (Konflux/mobster friendly)`)
 	manifestCmd.Flags().Bool("sbom-link-buildroot", false, `reference the build-root SBOM from the image SBOM (externalDocumentRefs + BUILD_TOOL_OF)`)
 	manifestCmd.Flags().String("sbom-namespace", "", `base URI for the SBOM documentNamespace, e.g. "https://www.redhat.com" (default: https://osbuild.org/spdxdocs)`)
