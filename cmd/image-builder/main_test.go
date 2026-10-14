@@ -2,6 +2,9 @@ package main_test
 
 import (
 	"bytes"
+	"crypto/sha1" // #nosec G505
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1792,4 +1795,108 @@ func TestCacheDirForUidNonRootFallback(t *testing.T) {
 	require.NoError(t, err)
 	expected := filepath.Join(home, ".cache", "image-builder", "store")
 	assert.Equal(t, expected, main.CacheDirForUid(1000))
+}
+
+func TestBuildIntegrationSBOMRecordsArtifactSHA256(t *testing.T) {
+	restore := main.MockManifestgenDepsolver(fakeDepsolve)
+	defer restore()
+	restore = main.MockManifestgenContainerResolver(fakeContainerResolver)
+	defer restore()
+	restore = main.MockNewRepoRegistry(testrepos.New)
+	defer restore()
+
+	outputDir := filepath.Join(t.TempDir(), "output")
+	prefix := fmt.Sprintf("centos-9-qcow2-%s", arch.Current().String())
+	restore = main.MockOsArgs([]string{
+		"build", "qcow2", "--distro", "centos-9", "--cache", t.TempDir(), "--output-dir", outputDir,
+		"--with-sbom", "--sbom-os-root", "--sbom-link-buildroot", "--sbom-namespace", "https://www.redhat.com",
+	})
+	defer restore()
+	testutil.MockCommand(t, "osbuild", makeFakeOsbuildScript())
+
+	require.NoError(t, main.Run())
+
+	img := filepath.Join(outputDir, prefix+".qcow2")
+	// sha256sum of "fake-img-qcow2\n" as written by the fake osbuild
+	h := sha256.Sum256([]byte("fake-img-qcow2\n"))
+	want := hex.EncodeToString(h[:])
+
+	var doc map[string]interface{}
+	data, err := os.ReadFile(filepath.Join(outputDir, prefix+".image-os.spdx.json"))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &doc))
+	assert.True(t, strings.HasPrefix(doc["documentNamespace"].(string), "https://www.redhat.com/"))
+	var root map[string]interface{}
+	for _, p := range doc["packages"].([]interface{}) {
+		if p.(map[string]interface{})["SPDXID"] == "SPDXRef-image-root" {
+			root = p.(map[string]interface{})
+		}
+	}
+	require.NotNil(t, root)
+	assert.Equal(t, filepath.Base(img), root["packageFileName"])
+	assert.Equal(t, []interface{}{map[string]interface{}{"algorithm": "SHA256", "checksumValue": want}}, root["checksums"])
+
+	// the build-root SBOM is not modified, so the SHA1 referenced from the image SBOM still matches
+	br, err := os.ReadFile(filepath.Join(outputDir, prefix+".buildroot-build.spdx.json"))
+	require.NoError(t, err)
+	sum := sha1.Sum(br) // #nosec G401
+	ref := doc["externalDocumentRefs"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, hex.EncodeToString(sum[:]), ref["checksum"].(map[string]interface{})["checksumValue"])
+}
+
+func TestManifestIntegrationSBOMLayout(t *testing.T) {
+	restore := main.MockManifestgenDepsolver(fakeDepsolve)
+	defer restore()
+	restore = main.MockManifestgenContainerResolver(fakeContainerResolver)
+	defer restore()
+	restore = main.MockNewRepoRegistry(testrepos.New)
+	defer restore()
+
+	outputDir := t.TempDir()
+	restore = main.MockOsArgs([]string{
+		"manifest", "qcow2", "--arch=x86_64", "--distro=centos-9", "--output-dir", outputDir,
+		"--with-sbom", "--sbom-os-root", "--sbom-link-buildroot",
+		"--sbom-creator", "Organization: Red Hat", "--sbom-namespace", "https://www.redhat.com",
+	})
+	defer restore()
+	restore = main.MockOsStdout(io.Discard)
+	defer restore()
+	require.NoError(t, main.Run())
+
+	read := func(name string) map[string]interface{} {
+		data, err := os.ReadFile(filepath.Join(outputDir, "centos-9-qcow2-x86_64."+name))
+		require.NoError(t, err)
+		var d map[string]interface{}
+		require.NoError(t, json.Unmarshal(data, &d))
+		return d
+	}
+	img, br := read("image-os.spdx.json"), read("buildroot-build.spdx.json")
+	for _, d := range []map[string]interface{}{img, br} {
+		ci := d["creationInfo"].(map[string]interface{})
+		assert.Contains(t, ci["creators"], "Organization: Red Hat")
+		assert.Contains(t, ci["comment"], "SBOM generation context: build.")
+		assert.Regexp(t, `^https://www\.redhat\.com/[^/]+\.spdx\.json$`, d["documentNamespace"])
+	}
+	for _, d := range []map[string]interface{}{img, br} {
+		var describes []interface{}
+		for _, r := range d["relationships"].([]interface{}) {
+			if r.(map[string]interface{})["relationshipType"] == "DESCRIBES" {
+				describes = append(describes, r.(map[string]interface{})["relatedSpdxElement"])
+			}
+		}
+		assert.Equal(t, []interface{}{"SPDXRef-image-root"}, describes)
+	}
+	assert.Equal(t, "centos-9-qcow2-x86_64-build", br["name"])
+	ref := img["externalDocumentRefs"].([]interface{})[0].(map[string]interface{})
+	assert.Equal(t, "DocumentRef-buildroot-build", ref["externalDocumentId"])
+	assert.Equal(t, br["documentNamespace"], ref["spdxDocument"])
+	// manifest-only: the image artifact does not exist yet, so the root has no checksum
+	for _, p := range img["packages"].([]interface{}) {
+		pm := p.(map[string]interface{})
+		if pm["SPDXID"] == "SPDXRef-image-root" {
+			assert.Equal(t, "OPERATING_SYSTEM", pm["primaryPackagePurpose"])
+			assert.NotContains(t, pm, "checksums")
+			assert.NotContains(t, pm, "packageFileName")
+		}
+	}
 }

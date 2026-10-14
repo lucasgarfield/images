@@ -319,7 +319,7 @@ func Depsolve(
 			var err error
 			sbomDoc, err = sbom.NewDocument(
 				sbom.StandardTypeSpdx,
-				json.RawMessage(fmt.Sprintf(`{"sbom-for":"%s"}`, pkgSetName)),
+				json.RawMessage(fmt.Sprintf(`{"sbom-for":"%s","SPDXID":"SPDXRef-DOCUMENT","documentNamespace":"https://osbuild.org/spdxdocs/mock-%s"}`, pkgSetName, pkgSetName)),
 			)
 			if err != nil {
 				return nil, err

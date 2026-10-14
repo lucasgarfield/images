@@ -255,8 +255,8 @@ func TestManifestGeneratorDepsolveWithSbomWriter(t *testing.T) {
 	assert.Contains(t, generatedSboms, "centos-9-qcow2-x86_64.buildroot-build.spdx.json")
 	assert.Contains(t, generatedSboms, "centos-9-qcow2-x86_64.image-os.spdx.json")
 	expected := map[string]string{
-		"centos-9-qcow2-x86_64.buildroot-build.spdx.json": `{"sbom-for":"build"}`,
-		"centos-9-qcow2-x86_64.image-os.spdx.json":        `{"sbom-for":"os"}`,
+		"centos-9-qcow2-x86_64.buildroot-build.spdx.json": `{"sbom-for":"build","SPDXID":"SPDXRef-DOCUMENT","documentNamespace":"https://osbuild.org/spdxdocs/mock-build"}`,
+		"centos-9-qcow2-x86_64.image-os.spdx.json":        `{"sbom-for":"os","SPDXID":"SPDXRef-DOCUMENT","documentNamespace":"https://osbuild.org/spdxdocs/mock-os"}`,
 	}
 	assert.Equal(t, expected, generatedSboms)
 }

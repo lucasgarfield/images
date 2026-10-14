@@ -237,6 +237,11 @@ func setupManifestCmd() (*cobra.Command, error) {
 		return nil, err
 	}
 	manifestCmd.Flags().Bool("with-sbom", false, `export SPDX SBOM document`)
+	manifestCmd.Flags().String("bootc-ref-sbom", "", `with --bootc-ref and --with-sbom: SPDX 2.3 SBOM of the bootc container; its packages are merged inline under the disk root, linked with GENERATED_FROM, and it must describe the resolved container digest`)
+	manifestCmd.Flags().Bool("sbom-os-root", false, `add an OPERATING_SYSTEM root package to the image SBOM (Konflux/mobster friendly)`)
+	manifestCmd.Flags().Bool("sbom-link-buildroot", false, `reference the build-root SBOM from the image SBOM (externalDocumentRefs + BUILD_TOOL_OF)`)
+	manifestCmd.Flags().String("sbom-namespace", "", `base URI for the SBOM documentNamespace, e.g. "https://www.redhat.com" (default: https://osbuild.org/spdxdocs)`)
+	manifestCmd.Flags().StringArray("sbom-creator", nil, `extra SPDX creator for the SBOMs, e.g. "Organization: Red Hat" (SBOM author)`)
 	manifestCmd.Flags().Bool("with-rpmlist", false, `export RPM list as JSON`)
 	if err := manifestCmd.Flags().MarkHidden("with-rpmlist"); err != nil {
 		return nil, err
@@ -309,6 +314,7 @@ func setupBuildCmd() (*cobra.Command, error) {
 	buildCmd.Flags().StringArray("with-extra", nil, `include an extra by type:name in the build, globs supported (e.g. --with-extra "sysext:*")`)
 	buildCmd.Flags().Bool("with-manifest", false, `export osbuild manifest`)
 	buildCmd.Flags().Bool("with-buildlog", false, `export osbuild buildlog`)
+	buildCmd.Flags().String("manifest", "", `build this osbuild manifest (from "image-builder manifest") instead of generating one; no depsolving or network access. With --with-sbom, the SBOMs written by "manifest --with-sbom" next to it are checked against the manifest and get the artifact SHA256`)
 	buildCmd.Flags().String("cache", defaultCacheDir(), `osbuild directory to cache intermediate build artifacts"`)
 	// XXX: add "--verbose" here, similar to how bib is doing this
 	// (see https://github.com/osbuild/bootc-image-builder/pull/790/commits/5cec7ffd8a526e2ca1e8ada0ea18f927695dfe43)

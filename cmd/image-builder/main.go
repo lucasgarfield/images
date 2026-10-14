@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -674,6 +675,18 @@ func generateManifest(pbar progress.ProgressBar, cmd *cobra.Command, args []stri
 		return nil, err
 	}
 	if withSBOM {
+		if mgOptions.SBOMOSRoot, err = cmd.Flags().GetBool("sbom-os-root"); err != nil {
+			return nil, err
+		}
+		if mgOptions.SBOMLinkBuildroot, err = cmd.Flags().GetBool("sbom-link-buildroot"); err != nil {
+			return nil, err
+		}
+		if mgOptions.SBOMCreators, err = cmd.Flags().GetStringArray("sbom-creator"); err != nil {
+			return nil, err
+		}
+		if mgOptions.SBOMNamespace, err = cmd.Flags().GetString("sbom-namespace"); err != nil {
+			return nil, err
+		}
 		sbomDir, err := resolveOutputDir(outputDir, img)
 		if err != nil {
 			return nil, err
@@ -681,6 +694,14 @@ func generateManifest(pbar progress.ProgressBar, cmd *cobra.Command, args []stri
 		sbomBasename, err := basenameFor(img, outputFilename)
 		if err != nil {
 			return nil, err
+		}
+		if refSBOM, _ := cmd.Flags().GetString("bootc-ref-sbom"); refSBOM != "" {
+			if bootcRef == "" {
+				return nil, fmt.Errorf("--bootc-ref-sbom needs --bootc-ref")
+			}
+			if err := writeBootcDiskSBOM(cmd, img, sbomDir, sbomBasename, bootcRef, refSBOM); err != nil {
+				return nil, err
+			}
 		}
 		mgOptions.SBOMWriter = func(filename string, content io.Reader, docType sbom.StandardType) error {
 			filename = fmt.Sprintf("%s.%s", sbomBasename, strings.SplitN(filename, ".", 2)[1])
@@ -878,9 +899,28 @@ func cmdBuild(cmd *cobra.Command, args []string) error {
 
 	// We discard any warnings from the depsolver until we figure out a better
 	// idea (likely in manifestgen)
-	mf, err := generateManifest(pbar, cmd, args, img, io.Discard, opts)
+	manifestPath, err := cmd.Flags().GetString("manifest")
 	if err != nil {
 		return err
+	}
+	var mf []byte
+	if manifestPath != "" {
+		// Split flow: build a manifest made earlier by "image-builder
+		// manifest" (hermetic: no depsolve, sources come from the store).
+		mf, err = os.ReadFile(manifestPath)
+		if err != nil {
+			return fmt.Errorf("cannot read manifest: %w", err)
+		}
+		if withSBOM, _ := cmd.Flags().GetBool("with-sbom"); withSBOM {
+			if err := importManifestSBOMs(manifestPath, mf, outputDir, basename); err != nil {
+				return err
+			}
+		}
+	} else {
+		mf, err = generateManifest(pbar, cmd, args, img, io.Discard, opts)
+		if err != nil {
+			return err
+		}
 	}
 
 	bootMode := img.ImgType.BootMode()
@@ -923,6 +963,11 @@ func cmdBuild(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(osStdout, "Image build successful: %s\n", p)
 	}
 	imagePath := outputPaths[0]
+	if withSBOM, _ := cmd.Flags().GetBool("with-sbom"); withSBOM {
+		if err := recordArtifactInSBOMs(outputDir, basename, imagePath); err != nil {
+			return err
+		}
+	}
 
 	pbar, err = progressFromCmd(cmd, progress.ProgressConfig{
 		FilePath: filepath.Join(outputDir, fmt.Sprintf("%s.progress", basename)),
@@ -1027,4 +1072,97 @@ func main() {
 	if err != nil {
 		log.Fatalf("error: %s\n", err)
 	}
+}
+
+// recordArtifactInSBOMs writes the SHA256 and file name of the built image
+// into the image (payload) SBOMs written next to it; build-root SBOMs are
+// left untouched (their SHA1 is referenced from the image SBOM).
+func recordArtifactInSBOMs(outputDir, basename, imagePath string) error {
+	matches, err := filepath.Glob(filepath.Join(outputDir, basename+".image-*.spdx.json"))
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		sum, err := sbom.RecordSPDXArtifactFile(m, imagePath)
+		if err != nil {
+			return fmt.Errorf("cannot record artifact in SBOM %q: %w", m, err)
+		}
+		fmt.Fprintf(osStdout, "SBOM %s: recorded %s sha256:%s\n", m, filepath.Base(imagePath), sum)
+	}
+	return nil
+}
+
+// importManifestSBOMs brings the SBOMs that "image-builder manifest
+// --with-sbom" wrote next to manifestPath into outputDir for "build
+// --manifest --with-sbom". The manifest carries only RPM checksums and
+// URLs, not the depsolve metadata (license, summary, supplier, source RPM,
+// repo id) the SBOM is made of, so the SBOMs cannot be regenerated from it
+// in the hermetic build step. Instead every RPM checksum in the SBOMs must
+// be an RPM source of the manifest, and the image SBOMs must reference the
+// RPMs the manifest installs, so a stale or foreign SBOM is rejected.
+func importManifestSBOMs(manifestPath string, mf []byte, outputDir, basename string) error {
+	srcDir := filepath.Dir(manifestPath)
+	prefix := strings.TrimSuffix(filepath.Base(manifestPath), ".osbuild-manifest.json")
+	matches, err := filepath.Glob(filepath.Join(srcDir, prefix+".*.spdx.json"))
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		return fmt.Errorf("--with-sbom: no %s.*.spdx.json next to %s (run \"image-builder manifest --with-sbom\" first)", prefix, manifestPath)
+	}
+	sums, err := sbom.ManifestRPMChecksums(mf)
+	if err != nil {
+		return err
+	}
+	for _, m := range matches {
+		data, err := os.ReadFile(m)
+		if err != nil {
+			return err
+		}
+		if err := sbom.CheckSPDXAgainstManifest(data, sums); err != nil {
+			return fmt.Errorf("SBOM %s does not match manifest %s: %w", m, manifestPath, err)
+		}
+		dst := filepath.Join(outputDir, basename+strings.TrimPrefix(filepath.Base(m), prefix))
+		if dst == m {
+			continue
+		}
+		// #nosec: G306
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeBootcDiskSBOM writes <basename>.image-disk.spdx.json for a bootc
+// disk: the container SBOM given with --bootc-ref-sbom is checked against
+// the digests of the resolved --bootc-ref, and its installed packages are
+// merged inline under the disk root (see sbom.BootcDiskSBOM). "build"
+// later records the disk SHA256 in it (recordArtifactInSBOMs).
+func writeBootcDiskSBOM(cmd *cobra.Command, img *imagefilter.Result, sbomDir, basename, ref, sbomPath string) error {
+	container, err := os.ReadFile(sbomPath)
+	if err != nil {
+		return fmt.Errorf("cannot read --bootc-ref-sbom: %w", err)
+	}
+	out, err := exec.Command("podman", "image", "inspect", "--format", "{{.Digest}}{{range .RepoDigests}} {{.}}{{end}}", ref).Output()
+	if err != nil {
+		return fmt.Errorf("cannot resolve digest of bootc container %q: %w", ref, err)
+	}
+	var digests []string
+	for _, f := range strings.Fields(string(out)) {
+		if i := strings.LastIndex(f, "@"); i >= 0 {
+			f = f[i+1:]
+		}
+		digests = append(digests, f)
+	}
+	creators, _ := cmd.Flags().GetStringArray("sbom-creator")
+	ns, _ := cmd.Flags().GetString("sbom-namespace")
+	doc, err := sbom.BootcDiskSBOM(container, sbom.BootcDisk{
+		Name: basename, ImageType: img.ImgType.Name(), Arch: img.ImgType.Arch().Name(),
+		Creators: creators, Namespace: ns, Tool: "Tool: image-builder", Digests: digests, ContainerRef: ref,
+	})
+	if err != nil {
+		return fmt.Errorf("--bootc-ref-sbom: %w", err)
+	}
+	return fileWriter(sbomDir, basename+".image-disk.spdx.json", bytes.NewReader(doc))
 }
